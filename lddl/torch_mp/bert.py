@@ -61,7 +61,7 @@ class BertPretrainDataset(ParquetDataset):
 
 
 class BertPretrainBinned(Binned):
-
+  
   def _get_batch_size(self, batch):
     return batch['input_ids'].size(0)
 
@@ -228,6 +228,7 @@ def get_bert_pretrain_data_loader(
     start_epoch=0,
     sequence_length_alignment=8,
     ignore_index=-1,
+    samples_seen = 0,
 ):
   """Gets a PyTorch DataLoader for the BERT pretraining task.
 
@@ -406,7 +407,9 @@ def get_bert_pretrain_data_loader(
   all_file_paths = get_all_parquets_under(path)
   bin_ids = get_all_bin_ids(all_file_paths)
   if len(bin_ids) > 0:
-    data_loader = BertPretrainBinned(
+    if samples_seen > 0:
+      # temporary dataloader to find how many samples are in each bin
+      tmp_dl = BertPretrainBinned(
         [
             data_loader_class(
                 BertPretrainDataset(
@@ -417,9 +420,42 @@ def get_bert_pretrain_data_loader(
             ) for bin_id in bin_ids
         ],
         base_seed=base_seed,
-        start_epoch=start_epoch,
         logger=logger,
-    )
+      )
+      bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
+      del tmp_dl
+
+      data_loader = BertPretrainBinned(
+          [
+              data_loader_class(
+                  BertPretrainDataset(
+                      get_file_paths_for_bin_id(all_file_paths, bin_id),
+                      samples_seen = bins_samples_seen[i],
+                      **dataset_kwargs,
+                  ),
+                  **data_loader_kwargs,
+              ) for i, bin_id in enumerate(bin_ids)
+          ],
+          base_seed=base_seed,
+          start_epoch=start_epoch,
+          logger=logger,
+          bins_samples_seen=bins_samples_seen
+      )
+    else:
+      data_loader = BertPretrainBinned(
+          [
+              data_loader_class(
+                  BertPretrainDataset(
+                      get_file_paths_for_bin_id(all_file_paths, bin_id),
+                      **dataset_kwargs,
+                  ),
+                  **data_loader_kwargs,
+              ) for bin_id in bin_ids
+          ],
+          base_seed=base_seed,
+          start_epoch=start_epoch,
+          logger=logger,
+      )
   else:  # un-binned
     data_loader = data_loader_class(
         BertPretrainDataset(all_file_paths, **dataset_kwargs),

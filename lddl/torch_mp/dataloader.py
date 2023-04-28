@@ -31,7 +31,7 @@ from .datasets import ParquetDataset
 
 class Binned:
 
-  def __init__(self, dataloaders, base_seed=12345, start_epoch=0, logger=None):
+  def __init__(self, dataloaders, base_seed=12345, start_epoch=0,samples_seen=0, logger=None, bins_samples_seen = None):
     self._dataloaders = dataloaders
 
     self._base_seed = base_seed
@@ -40,6 +40,7 @@ class Binned:
     self._logger = logger
 
     self._world_rng_state = None
+    self.bins_samples_seen = bins_samples_seen
 
   def _init_rng_states(self):
     orig_rng_state = random.getstate()
@@ -70,10 +71,32 @@ class Binned:
         rng_state=self._world_rng_state,
     )
     return c
-
-  def __iter__(self):
-    self._epoch += 1
+  
+  def get_samples_seen_datasets(self,samples_seen,batch_size):
     num_samples_remaining, dataiters = self._init_iter()
+    # If we have already gone through the data at least once we don't need to wind all the epochs
+    self._epoch =  samples_seen // sum(num_samples_remaining)
+    samples_seen = samples_seen % sum(num_samples_remaining)
+    self._init_rng_states()
+    if samples_seen > 0:
+      bins_samples_seen = [0] * len(self._dataloaders)
+      while samples_seen > 0:
+        bin_id = self._choices(
+            list(range(len(self._dataloaders))),
+            weights=num_samples_remaining,
+            k=1,
+        )[0]
+        num_samples_remaining[bin_id] -= batch_size
+        bins_samples_seen[bin_id] += batch_size
+        samples_seen -= batch_size
+    return bins_samples_seen, self._epoch
+
+  def __iter__(self):      
+    self._epoch += 1
+    num_samples_remaining , dataiters = self._init_iter()
+    if self.bins_samples_seen != None:
+      for i in range(len(self.bins_samples_seen)):
+        num_samples_remaining[i] = num_samples_remaining[i] - self.bins_samples_seen[i] 
 
     for i in range(len(self)):
       bin_id = self._choices(
