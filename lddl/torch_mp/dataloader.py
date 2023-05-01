@@ -80,6 +80,7 @@ class Binned:
     self._init_rng_states()
     if samples_seen > 0:
       bins_samples_seen = [0] * len(self._dataloaders)
+      print("Beginning calculating choices")
       while samples_seen > 0:
         bin_id = self._choices(
             list(range(len(self._dataloaders))),
@@ -89,6 +90,7 @@ class Binned:
         num_samples_remaining[bin_id] -= batch_size
         bins_samples_seen[bin_id] += batch_size
         samples_seen -= batch_size
+      print("Done calculating choices")
     return bins_samples_seen, self._epoch
 
   def __iter__(self):      
