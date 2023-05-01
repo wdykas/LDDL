@@ -89,7 +89,6 @@ class ShuffleBuffer:
     remaining_num_samples = num_samples_to_yield
     for f in self._files:
       self._logger.to('worker').info('Reading {}'.format(f.path))
-      print("winding forward dataloader")
       #PREMPTIVE CODE####################################
       pq_table = pq.read_table(f.path)
       if self.samples_seen > 0:
@@ -102,7 +101,6 @@ class ShuffleBuffer:
         pq_table = pq_table.slice(self.samples_seen)
         self.samples_seen = 0
       #PREMPTIVE CODE #################################
-      print("done winding dataloader")
       for b in pq_table.to_batches():
         for sample in self._decode_record_batch(b):
           if remaining_num_samples <= 0:

@@ -423,7 +423,6 @@ def get_bert_pretrain_data_loader(
         base_seed=base_seed,
         logger=logger,
       )
-      print("Calculating samples seen by dataloader")
       bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
       del tmp_dl
 
