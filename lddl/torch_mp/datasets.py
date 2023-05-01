@@ -84,19 +84,19 @@ class ShuffleBuffer:
     buffer = []
     num_samples_to_yield = min(
         self._max_num_samples_to_yield,
-        sum((f.num_samples for f in self._files)),
+        sum((f.num_samples for f in self._files)) - self.samples_seen,
     )
     remaining_num_samples = num_samples_to_yield
     for f in self._files:
       self._logger.to('worker').info('Reading {}'.format(f.path))
       #PREMPTIVE CODE####################################
-      pq_table = pq.read_table(f.path)
       if self.samples_seen > 0:
-          len_par = len(pq_table)
+          len_par = f.num_samples
           # Skip entire parquet if possible
           if len_par < self.samples_seen:
             self.samples_seen -= len_par
             continue
+      pq_table = pq.read_table(f.path)
       if self.samples_seen > 0:
         pq_table = pq_table.slice(self.samples_seen)
         self.samples_seen = 0
@@ -299,5 +299,6 @@ class ParquetDataset(IterableDataset):
         self._worker_rng_state,
         self.samples_seen
     )
+    self.samples_seen = 0
     for sample in iter(self.sb):
       yield self._transform(sample)

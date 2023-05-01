@@ -423,6 +423,7 @@ def get_bert_pretrain_data_loader(
         logger=logger,
       )
       bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
+      print(f"binned samples seen {bins_samples_seen}")
       del tmp_dl
       data_loader = BertPretrainBinned(
           [
@@ -440,6 +441,8 @@ def get_bert_pretrain_data_loader(
           logger=logger,
           bins_samples_seen=bins_samples_seen
       )
+      #TODO: IS THIS NECCESSARY
+      samples_seen = 0
     else:
       data_loader = BertPretrainBinned(
           [
