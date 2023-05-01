@@ -408,7 +408,6 @@ def get_bert_pretrain_data_loader(
   bin_ids = get_all_bin_ids(all_file_paths)
   if len(bin_ids) > 0:
     if samples_seen > 0:
-      #torch.multiprocessing.set_sharing_strategy('file_system')
       # temporary dataloader to find how many samples are in each bin
       tmp_dl = BertPretrainBinned(
         [
@@ -425,7 +424,6 @@ def get_bert_pretrain_data_loader(
       )
       bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
       del tmp_dl
-
       data_loader = BertPretrainBinned(
           [
               data_loader_class(
