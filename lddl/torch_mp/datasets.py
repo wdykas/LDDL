@@ -89,7 +89,6 @@ class ShuffleBuffer:
     remaining_num_samples = num_samples_to_yield
     for f in self._files:
       self._logger.to('worker').info('Reading {}'.format(f.path))
-      #PREMPTIVE CODE####################################
       if self.samples_seen > 0:
           len_par = f.num_samples
           # Skip entire parquet if possible
@@ -100,7 +99,6 @@ class ShuffleBuffer:
       if self.samples_seen > 0:
         pq_table = pq_table.slice(self.samples_seen)
         self.samples_seen = 0
-      #PREMPTIVE CODE #################################
       for b in pq_table.to_batches():
         for sample in self._decode_record_batch(b):
           if remaining_num_samples <= 0:
