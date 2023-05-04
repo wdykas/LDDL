@@ -27,11 +27,11 @@ import torch
 
 from lddl.random import choices
 from .datasets import ParquetDataset
-
+from .utils import get_rank
 
 class Binned:
 
-  def __init__(self, dataloaders, base_seed=12345, start_epoch=0,samples_seen=0, logger=None, bins_samples_seen = None):
+  def __init__(self, dataloaders, base_seed=12345, start_epoch=0, global_batch_size = 64, batch_preprocess = None, logger=None):
     self._dataloaders = dataloaders
 
     self._base_seed = base_seed
@@ -40,7 +40,13 @@ class Binned:
     self._logger = logger
 
     self._world_rng_state = None
-    self.bins_samples_seen = bins_samples_seen
+    self.current_iteration = 0
+    self.peek_item = None
+    self.global_batch_size = global_batch_size
+    self.bin_id = None
+    # We have to buffer the entire global batch
+    self.global_batch = []
+    self.batch_preprocess = batch_preprocess
 
   def _init_rng_states(self):
     orig_rng_state = random.getstate()
@@ -86,33 +92,64 @@ class Binned:
             weights=num_samples_remaining,
             k=1,
         )[0]
-        num_samples_remaining[bin_id] -= batch_size
-        bins_samples_seen[bin_id] += batch_size
-        samples_seen -= batch_size
+        num_samples_remaining[bin_id] -= self.global_batch_size
+        bins_samples_seen[bin_id] += self.global_batch_size
+        samples_seen -= self.global_batch_size
     return bins_samples_seen, self._epoch
 
-  def __iter__(self):      
+  def set_next(self):
+    # We are at the end of Epoch
+    if self.current_iteration >= len(self):
+      self.global_batch = None
+    else:
+      # TODO: WE are picking the right buckets but its moving by mb so the inbetween mbs have different seqlens
+      # We are attempting to buffer the entire global batch
+      if self.current_iteration == 0 or self.current_iteration % self.global_batch_size == 0:
+        self.bin_id = self._choices(
+                list(range(len(self.dataiters))),
+                weights=self.num_samples_remaining,
+                k=1,
+            )[0]
+        self.global_batch = []
+        for i in range(self.global_batch_size):
+          sample = next(self.dataiters[self.bin_id])[0]
+          self.global_batch.append(sample)
+        self.num_samples_remaining[self.bin_id] -= self.global_batch_size
+        self.global_batch = self.batch_preprocess(self.global_batch)
+      self.current_iteration += 1
+      # if self.current_iteration == 0 or self.current_iteration % self.global_batch_size == 0: 
+      #   self.bin_id = self._choices(
+      #           list(range(len(self.dataiters))),
+      #           weights=self.num_samples_remaining,
+      #           k=1,
+      #       )[0]
+      #print(f"iter {self.current_iteration} rank {get_rank()} bin {self.bin_id}")
+      #assert self.num_samples_remaining[self.bin_id] > 0
+      #batch = next(self.dataiters[self.bin_id])
+      #self.num_samples_remaining[self.bin_id] -= self._get_batch_size(batch)
+      #self.peek_item = batch
+
+  # def peek(self):
+  #   return self.peek_item
+  def get_seqlen(self):
+    print(f"global batch {self.global_batch}")
+    return self.global_batch[0]['text'].shape[1]
+
+  def __next__(self):
+      if self.global_batch is None:
+        return StopIteration
+      else:
+        sample = self.global_batch[self.iteration % self.global_batch_size]
+        self.set_next()
+        return sample
+        
+
+  def __iter__(self): 
     self._epoch += 1
-    num_samples_remaining , dataiters = self._init_iter()
-    if self.bins_samples_seen != None:
-      for i in range(len(self.bins_samples_seen)):
-        num_samples_remaining[i] = num_samples_remaining[i] - self.bins_samples_seen[i] 
-
-    for i in range(len(self)):
-      bin_id = self._choices(
-          list(range(len(dataiters))),
-          weights=num_samples_remaining,
-          k=1,
-      )[0]
-      self._logger.to('rank').info('{}-th iteration selects bin_id = {}'.format(
-          i, bin_id))
-      assert num_samples_remaining[bin_id] > 0
-      batch = next(dataiters[bin_id])
-      num_samples_remaining[bin_id] -= self._get_batch_size(batch)
-      yield batch
-
-    assert sum((nsr for nsr in num_samples_remaining)) == 0
-
+    self.num_samples_remaining , self.dataiters = self._init_iter()
+    self.current_iteration = 0
+    self.set_next()
+    return self
 
 class DataLoader(torch.utils.data.DataLoader):
 

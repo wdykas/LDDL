@@ -99,6 +99,7 @@ class ShuffleBuffer:
       if self.samples_seen > 0:
         pq_table = pq_table.slice(self.samples_seen)
         self.samples_seen = 0
+      
       for b in pq_table.to_batches():
         for sample in self._decode_record_batch(b):
           if remaining_num_samples <= 0:
@@ -228,7 +229,7 @@ class ParquetDataset(IterableDataset):
     We need to patch PyTorch DataLoader function for this function to behave
     correctly.
     """
-    return self._num_samples_per_file * len(self._files) // self._num_dp_groups
+    return (self._num_samples_per_file * len(self._files) // self._num_dp_groups) - self.samples_seen
 
   @property
   def num_samples_per_file(self):
@@ -297,6 +298,6 @@ class ParquetDataset(IterableDataset):
         self._worker_rng_state,
         self.samples_seen
     )
-    self.samples_seen = 0
     for sample in iter(self.sb):
       yield self._transform(sample)
+    self.samples_seen = 0

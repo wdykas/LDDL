@@ -63,7 +63,7 @@ class BertPretrainDataset(ParquetDataset):
 class BertPretrainBinned(Binned):
   
   def _get_batch_size(self, batch):
-    return batch['input_ids'].size(0)
+    return batch['text'].size(0)
 
 
 def _to_encoded_inputs(
@@ -72,6 +72,18 @@ def _to_encoded_inputs(
     sequence_length_alignment=8,
     ignore_index=-1,
 ):
+  #print(len(batch[0]))
+  #print(f"{batch[0]}")
+  print(len(batch[1]))
+  print(batch[0][0])
+  print(batch[0][1])
+  print(batch[0][2])
+  print(batch[0][3])
+
+  # print(f"1 {batch[1]}")
+  # print(f"2 {batch[2]}")
+  # print(f"3 {batch[3]}")
+
   batch_size = len(batch)
   As, Bs, are_random_next = [], [], []
   static_masking = (len(batch[0]) > 3)
@@ -133,13 +145,13 @@ def _to_encoded_inputs(
       special_tokens_mask[sample_idx, len(tokens_A) + len(tokens_B) + 2:] = 1
   # Compose output dict.
   encoded_inputs = {
-      'input_ids':
+      'text':
           input_ids,
-      'token_type_ids':
+      'types':
           token_type_ids,
-      'attention_mask':
+      'padding_mask':
           attention_mask,
-      'next_sentence_labels':
+      'is_random':
           torch.as_tensor(
               are_random_next,
               dtype=torch.long,
@@ -147,7 +159,7 @@ def _to_encoded_inputs(
   }
   if static_masking:
     encoded_inputs['labels'] = labels
-    encoded_inputs['masked_lm_positions'] = loss_mask
+    encoded_inputs['loss_mask'] = loss_mask
   else:
     encoded_inputs['special_tokens_mask'] = special_tokens_mask
   return encoded_inputs
@@ -200,6 +212,34 @@ def _mask_tokens(
   return inputs, labels
 
 
+# class PeekingIter:
+#   def __init__(self, base_iterable):
+#     self.base_iterable = base_iterable
+#     self.iterator = None
+#     self.peeked_item = None
+
+#   def __iter__(self):
+#     self.iterator = iter(self.base_iterable)
+#     self.peeked_item = next(self.iterator)
+#     return self
+
+#   def peek(self):
+#     return self.peeked_item
+
+#   def __next__(self):
+#     if self.has_next():
+#       temp = self.peeked_item
+#       try:
+#         self.peeked_item = next(self.iterator)
+#       except StopIteration:
+#         self.peeked_item = None
+#       return temp
+#     else:
+#       raise StopIteration
+
+#   def has_next(self):
+#     return self.peeked_item is not None
+
 """
 This data loader differs from the one in lddl.torch.bert by no longer building
 from local_rank and instead building from data parallel rank instead.This
@@ -229,6 +269,7 @@ def get_bert_pretrain_data_loader(
     sequence_length_alignment=8,
     ignore_index=-1,
     samples_seen = 0,
+    global_batch_size= 64,
 ):
   """Gets a PyTorch DataLoader for the BERT pretraining task.
 
@@ -395,11 +436,10 @@ def get_bert_pretrain_data_loader(
       'logger': logger,
       'start_epoch': start_epoch,
   }
-
   extra_collate = data_loader_kwargs.get('collate_fn', lambda x: x)
-  if not return_raw_samples:
-    data_loader_kwargs['collate_fn'] = lambda batch: extra_collate(
-        _batch_preprocess(batch))
+  # if not return_raw_samples:
+    # data_loader_kwargs['collate_fn'] = lambda batch: extra_collate(
+    #     _batch_preprocess(batch))
   data_loader_kwargs['persistent_workers'] = True
 
   # Find all the parquet file paths and figure out whether it is binned or
@@ -421,6 +461,8 @@ def get_bert_pretrain_data_loader(
         ],
         base_seed=base_seed,
         logger=logger,
+        global_batch_size = global_batch_size,
+        batch_preprocess= lambda batch: extra_collate(_batch_preprocess(batch))
       )
       bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
       del tmp_dl
@@ -438,9 +480,9 @@ def get_bert_pretrain_data_loader(
           base_seed=base_seed,
           start_epoch=start_epoch,
           logger=logger,
-          bins_samples_seen=bins_samples_seen
-      )
-      samples_seen = 0
+          global_batch_size = global_batch_size,
+          batch_preprocess= lambda batch: extra_collate(_batch_preprocess(batch))
+          )
     else:
       data_loader = BertPretrainBinned(
           [
@@ -455,6 +497,8 @@ def get_bert_pretrain_data_loader(
           base_seed=base_seed,
           start_epoch=start_epoch,
           logger=logger,
+          global_batch_size = global_batch_size,
+          batch_preprocess= lambda batch: extra_collate(_batch_preprocess(batch))
       )
   else:  # un-binned
     data_loader = data_loader_class(
