@@ -69,22 +69,12 @@ class BertPretrainBinned(Binned):
 def _to_encoded_inputs(
     batch,
     tokenizer,
+    micro_batch_size,
     sequence_length_alignment=8,
     ignore_index=-1,
 ):
-  #print(len(batch[0]))
-  #print(f"{batch[0]}")
-  print(len(batch[1]))
-  print(batch[0][0])
-  print(batch[0][1])
-  print(batch[0][2])
-  print(batch[0][3])
 
-  # print(f"1 {batch[1]}")
-  # print(f"2 {batch[2]}")
-  # print(f"3 {batch[3]}")
-
-  batch_size = len(batch)
+  #batch_size = len(batch)
   As, Bs, are_random_next = [], [], []
   static_masking = (len(batch[0]) > 3)
   if static_masking:
@@ -106,63 +96,76 @@ def _to_encoded_inputs(
   # TC doesn't like it otherwise.
   batch_seq_len = (((batch_seq_len - 1) // sequence_length_alignment + 1) *
                    sequence_length_alignment)
-  # Allocate the input torch.Tensor's.
-  input_ids = torch.zeros(batch_size, batch_seq_len, dtype=torch.long)
-  token_type_ids = torch.zeros_like(input_ids)
-  attention_mask = torch.zeros_like(input_ids)
-  if static_masking:
-    labels = torch.full_like(input_ids, ignore_index)
-    loss_mask = torch.zeros(batch_size, batch_seq_len, dtype=torch.long)
-    for i, indices in enumerate(all_masked_lm_positions):
-      loss_mask[i].scatter_(0, indices, 1.)
-  else:
-    special_tokens_mask = torch.zeros_like(input_ids)
-  # Fill in the input torch.Tensor's.
-  for sample_idx in range(batch_size):
-    tokens_A, tokens_B = As[sample_idx], Bs[sample_idx]
-    # Prepare the input token IDs.
-    tokens = ('[CLS]',) + tokens_A + ('[SEP]',) + tokens_B + ('[SEP]',)
-    input_ids[sample_idx, :len(tokens)] = torch.as_tensor(
-        tokenizer.convert_tokens_to_ids(tokens),
-        dtype=torch.long,
-    )
-    # Prepare the token type ids (segment ids).
-    start_idx = len(tokens_A) + 2
-    end_idx = len(tokens_A) + len(tokens_B) + 3
-    token_type_ids[sample_idx, start_idx:end_idx] = 1
-    # Prepare the attention mask (input mask).
-    attention_mask[sample_idx, :end_idx] = 1
+    
+  #TODO: Inject microbatch logic here?
+  global_batch = []
+  global_batch_size = len(batch)
+  for i in range(0,global_batch_size,micro_batch_size):
+    # Allocate the input torch.Tensor's.
+    input_ids = torch.zeros(micro_batch_size, batch_seq_len, dtype=torch.long)
+    token_type_ids = torch.zeros_like(input_ids)
+    attention_mask = torch.zeros_like(input_ids)
     if static_masking:
-      # Prepare the MLM labels.
-      labels[sample_idx, all_masked_lm_positions[sample_idx]] = torch.as_tensor(
-          tokenizer.convert_tokens_to_ids(all_masked_lm_labels[sample_idx]),
+      labels = torch.full_like(input_ids, ignore_index)
+      
+      loss_mask = torch.zeros(micro_batch_size, batch_seq_len, dtype=torch.long)
+      mb_masked_lm_positions = all_masked_lm_positions[i:(i + micro_batch_size)]
+      for j, indices in enumerate(mb_masked_lm_positions):
+        loss_mask[j].scatter_(0, indices, 1.)
+    else:
+      special_tokens_mask = torch.zeros_like(input_ids)
+    
+    # Fill in the input torch.Tensor's.
+    for sample_idx in range(i,(i + micro_batch_size)):
+      #TODO Check for correctness here, we are taking the modolus to find the local index
+      local_sample_index = sample_idx % micro_batch_size
+      tokens_A, tokens_B = As[sample_idx], Bs[sample_idx]
+      # Prepare the input token IDs.
+      tokens = ('[CLS]',) + tokens_A + ('[SEP]',) + tokens_B + ('[SEP]',)
+      
+      input_ids[local_sample_index, :len(tokens)] = torch.as_tensor(
+          tokenizer.convert_tokens_to_ids(tokens),
           dtype=torch.long,
       )
+      # Prepare the token type ids (segment ids).
+      start_idx = len(tokens_A) + 2
+      end_idx = len(tokens_A) + len(tokens_B) + 3
+      token_type_ids[local_sample_index, start_idx:end_idx] = 1
+      # Prepare the attention mask (input mask).
+      attention_mask[local_sample_index, :end_idx] = 1
+      if static_masking:
+        # Prepare the MLM labels.
+        labels[local_sample_index, all_masked_lm_positions[i]] = torch.as_tensor(
+            tokenizer.convert_tokens_to_ids(all_masked_lm_labels[i]),
+            dtype=torch.long,
+        )
+      else:
+        #TODO This is not supported for model parallel
+        # Prepare special_tokens_mask (for DataCollatorForLanguageModeling)
+        special_tokens_mask[sample_idx, 0] = 1
+        special_tokens_mask[sample_idx, len(tokens_A) + 1] = 1
+        special_tokens_mask[sample_idx, len(tokens_A) + len(tokens_B) + 2:] = 1
+    # Compose output dict.
+    encoded_inputs = {
+        'text':
+            input_ids,
+        'types':
+            token_type_ids,
+        'padding_mask':
+            attention_mask,
+        'is_random':
+            torch.as_tensor(
+                are_random_next[i:(i + micro_batch_size)],
+                dtype=torch.long,
+            ),
+    }
+    if static_masking:
+      encoded_inputs['labels'] = labels
+      encoded_inputs['loss_mask'] = loss_mask
     else:
-      # Prepare special_tokens_mask (for DataCollatorForLanguageModeling)
-      special_tokens_mask[sample_idx, 0] = 1
-      special_tokens_mask[sample_idx, len(tokens_A) + 1] = 1
-      special_tokens_mask[sample_idx, len(tokens_A) + len(tokens_B) + 2:] = 1
-  # Compose output dict.
-  encoded_inputs = {
-      'text':
-          input_ids,
-      'types':
-          token_type_ids,
-      'padding_mask':
-          attention_mask,
-      'is_random':
-          torch.as_tensor(
-              are_random_next,
-              dtype=torch.long,
-          ),
-  }
-  if static_masking:
-    encoded_inputs['labels'] = labels
-    encoded_inputs['loss_mask'] = loss_mask
-  else:
-    encoded_inputs['special_tokens_mask'] = special_tokens_mask
-  return encoded_inputs
+      encoded_inputs['special_tokens_mask'] = special_tokens_mask
+    global_batch.append(encoded_inputs)
+  return global_batch
 
 
 def _mask_tokens(
@@ -402,11 +405,12 @@ def get_bert_pretrain_data_loader(
   else:
     tokenizer = tokenizer_class.from_pretrained(vocab_file, **tokenizer_kwargs)
 
-  def _batch_preprocess(batch):
+  def _batch_preprocess(batch,micro_batch_size):
     with torch.no_grad():
       encoded_inputs = _to_encoded_inputs(
           batch,
           tokenizer,
+          micro_batch_size,
           sequence_length_alignment=sequence_length_alignment,
           ignore_index=ignore_index,
       )
@@ -437,9 +441,11 @@ def get_bert_pretrain_data_loader(
       'start_epoch': start_epoch,
   }
   extra_collate = data_loader_kwargs.get('collate_fn', lambda x: x)
-  # if not return_raw_samples:
-    # data_loader_kwargs['collate_fn'] = lambda batch: extra_collate(
-    #     _batch_preprocess(batch))
+  #TODO: Override of batch size
+  micro_batch_size = data_loader_kwargs['batch_size']
+  data_loader_kwargs['batch_size'] = global_batch_size
+  if not return_raw_samples:
+    data_loader_kwargs['collate_fn'] = lambda batch: extra_collate(_batch_preprocess(batch,micro_batch_size = micro_batch_size))
   data_loader_kwargs['persistent_workers'] = True
 
   # Find all the parquet file paths and figure out whether it is binned or
@@ -462,7 +468,7 @@ def get_bert_pretrain_data_loader(
         base_seed=base_seed,
         logger=logger,
         global_batch_size = global_batch_size,
-        batch_preprocess= lambda batch: extra_collate(_batch_preprocess(batch))
+        batch_preprocess= lambda batch: _batch_preprocess(batch,micro_batch_size = micro_batch_size)
       )
       bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
       del tmp_dl
@@ -481,7 +487,7 @@ def get_bert_pretrain_data_loader(
           start_epoch=start_epoch,
           logger=logger,
           global_batch_size = global_batch_size,
-          batch_preprocess= lambda batch: extra_collate(_batch_preprocess(batch))
+          batch_preprocess= lambda batch: _batch_preprocess(batch,micro_batch_size = micro_batch_size)
           )
     else:
       data_loader = BertPretrainBinned(
@@ -498,7 +504,7 @@ def get_bert_pretrain_data_loader(
           start_epoch=start_epoch,
           logger=logger,
           global_batch_size = global_batch_size,
-          batch_preprocess= lambda batch: extra_collate(_batch_preprocess(batch))
+          batch_preprocess= lambda batch: _batch_preprocess(batch,micro_batch_size = micro_batch_size)
       )
   else:  # un-binned
     data_loader = data_loader_class(

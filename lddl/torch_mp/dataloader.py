@@ -41,11 +41,11 @@ class Binned:
 
     self._world_rng_state = None
     self.current_iteration = 0
-    self.peek_item = None
     self.global_batch_size = global_batch_size
     self.bin_id = None
     # We have to buffer the entire global batch
     self.global_batch = []
+    #TODO: We need to remove this, it is handled outside now
     self.batch_preprocess = batch_preprocess
 
   def _init_rng_states(self):
@@ -98,56 +98,35 @@ class Binned:
     return bins_samples_seen, self._epoch
 
   def set_next(self):
-    # We are at the end of Epoch
-    if self.current_iteration >= len(self):
+    # We are at the end of Epoch, setting Global_batch to None to let iterator know we are done
+    if max(self.num_samples_remaining) <= self.global_batch_size:
       self.global_batch = None
     else:
       # TODO: WE are picking the right buckets but its moving by mb so the inbetween mbs have different seqlens
-      # We are attempting to buffer the entire global batch
-      if self.current_iteration == 0 or self.current_iteration % self.global_batch_size == 0:
+      if self.global_batch == []:
         self.bin_id = self._choices(
                 list(range(len(self.dataiters))),
                 weights=self.num_samples_remaining,
                 k=1,
             )[0]
-        self.global_batch = []
-        for i in range(self.global_batch_size):
-          sample = next(self.dataiters[self.bin_id])[0]
-          self.global_batch.append(sample)
+        self.global_batch = next(self.dataiters[self.bin_id])
         self.num_samples_remaining[self.bin_id] -= self.global_batch_size
-        self.global_batch = self.batch_preprocess(self.global_batch)
       self.current_iteration += 1
-      # if self.current_iteration == 0 or self.current_iteration % self.global_batch_size == 0: 
-      #   self.bin_id = self._choices(
-      #           list(range(len(self.dataiters))),
-      #           weights=self.num_samples_remaining,
-      #           k=1,
-      #       )[0]
-      #print(f"iter {self.current_iteration} rank {get_rank()} bin {self.bin_id}")
-      #assert self.num_samples_remaining[self.bin_id] > 0
-      #batch = next(self.dataiters[self.bin_id])
-      #self.num_samples_remaining[self.bin_id] -= self._get_batch_size(batch)
-      #self.peek_item = batch
 
-  # def peek(self):
-  #   return self.peek_item
   def get_seqlen(self):
-    print(f"global batch {self.global_batch}")
     return self.global_batch[0]['text'].shape[1]
 
   def __next__(self):
       if self.global_batch is None:
         return StopIteration
       else:
-        sample = self.global_batch[self.iteration % self.global_batch_size]
+        sample = self.global_batch.pop()
         self.set_next()
         return sample
-        
 
-  def __iter__(self): 
+  def __iter__(self):
     self._epoch += 1
     self.num_samples_remaining , self.dataiters = self._init_iter()
-    self.current_iteration = 0
     self.set_next()
     return self
 
