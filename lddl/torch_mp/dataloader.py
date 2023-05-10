@@ -31,7 +31,7 @@ from .utils import get_rank
 
 class Binned:
 
-  def __init__(self, dataloaders, base_seed=12345, start_epoch=0, global_batch_size = 64, batch_preprocess = None, logger=None):
+  def __init__(self, dataloaders, base_seed=12345, start_epoch=0, global_batch_size = 64, logger=None):
     self._dataloaders = dataloaders
 
     self._base_seed = base_seed
@@ -43,10 +43,7 @@ class Binned:
     self.current_iteration = 0
     self.global_batch_size = global_batch_size
     self.bin_id = None
-    # We have to buffer the entire global batch
     self.global_batch = []
-    #TODO: We need to remove this, it is handled outside now
-    self.batch_preprocess = batch_preprocess
 
   def _init_rng_states(self):
     orig_rng_state = random.getstate()
@@ -80,7 +77,7 @@ class Binned:
   
   def get_samples_seen_datasets(self,samples_seen,batch_size):
     num_samples_remaining, dataiters = self._init_iter()
-    # If we have already gone through the data at least once we don't need to wind all the epochs
+    # Skip epochs that have already been seen
     self._epoch =  samples_seen // sum(num_samples_remaining)
     samples_seen = samples_seen % sum(num_samples_remaining)
     self._init_rng_states()
@@ -98,11 +95,10 @@ class Binned:
     return bins_samples_seen, self._epoch
 
   def set_next(self):
-    # We are at the end of Epoch, setting Global_batch to None to let iterator know we are done
+    # At the end of the epoch setting Global_batch to None to let iterator know we are done
     if max(self.num_samples_remaining) <= self.global_batch_size:
       self.global_batch = None
     else:
-      # TODO: WE are picking the right buckets but its moving by mb so the inbetween mbs have different seqlens
       if self.global_batch == []:
         self.bin_id = self._choices(
                 list(range(len(self.dataiters))),

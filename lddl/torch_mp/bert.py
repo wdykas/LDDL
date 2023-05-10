@@ -97,7 +97,6 @@ def _to_encoded_inputs(
   batch_seq_len = (((batch_seq_len - 1) // sequence_length_alignment + 1) *
                    sequence_length_alignment)
     
-  #TODO: Inject microbatch logic here?
   global_batch = []
   global_batch_size = len(batch)
   for i in range(0,global_batch_size,micro_batch_size):
@@ -140,7 +139,7 @@ def _to_encoded_inputs(
             dtype=torch.long,
         )
       else:
-        #TODO This is not supported for model parallel
+        # Note This is not supported for model parallel
         # Prepare special_tokens_mask (for DataCollatorForLanguageModeling)
         special_tokens_mask[sample_idx, 0] = 1
         special_tokens_mask[sample_idx, len(tokens_A) + 1] = 1
@@ -215,34 +214,6 @@ def _mask_tokens(
   return inputs, labels
 
 
-# class PeekingIter:
-#   def __init__(self, base_iterable):
-#     self.base_iterable = base_iterable
-#     self.iterator = None
-#     self.peeked_item = None
-
-#   def __iter__(self):
-#     self.iterator = iter(self.base_iterable)
-#     self.peeked_item = next(self.iterator)
-#     return self
-
-#   def peek(self):
-#     return self.peeked_item
-
-#   def __next__(self):
-#     if self.has_next():
-#       temp = self.peeked_item
-#       try:
-#         self.peeked_item = next(self.iterator)
-#       except StopIteration:
-#         self.peeked_item = None
-#       return temp
-#     else:
-#       raise StopIteration
-
-#   def has_next(self):
-#     return self.peeked_item is not None
-
 """
 This data loader differs from the one in lddl.torch.bert by no longer building
 from local_rank and instead building from data parallel rank instead.This
@@ -272,7 +243,7 @@ def get_bert_pretrain_data_loader(
     sequence_length_alignment=8,
     ignore_index=-1,
     samples_seen = 0,
-    global_batch_size= 64,
+    micro_batch_size= 64,
 ):
   """Gets a PyTorch DataLoader for the BERT pretraining task.
 
@@ -441,9 +412,8 @@ def get_bert_pretrain_data_loader(
       'start_epoch': start_epoch,
   }
   extra_collate = data_loader_kwargs.get('collate_fn', lambda x: x)
-  #TODO: Override of batch size
-  micro_batch_size = data_loader_kwargs['batch_size']
-  data_loader_kwargs['batch_size'] = global_batch_size
+  global_batch_size = data_loader_kwargs['batch_size']
+  
   if not return_raw_samples:
     data_loader_kwargs['collate_fn'] = lambda batch: extra_collate(_batch_preprocess(batch,micro_batch_size = micro_batch_size))
   data_loader_kwargs['persistent_workers'] = True
@@ -467,10 +437,9 @@ def get_bert_pretrain_data_loader(
         ],
         base_seed=base_seed,
         logger=logger,
-        global_batch_size = global_batch_size,
-        batch_preprocess= lambda batch: _batch_preprocess(batch,micro_batch_size = micro_batch_size)
+        global_batch_size = global_batch_size
       )
-      bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,data_loader_kwargs["batch_size"])
+      bins_samples_seen, start_epoch = tmp_dl.get_samples_seen_datasets(samples_seen,global_batch_size)
       del tmp_dl
       data_loader = BertPretrainBinned(
           [
@@ -486,8 +455,7 @@ def get_bert_pretrain_data_loader(
           base_seed=base_seed,
           start_epoch=start_epoch,
           logger=logger,
-          global_batch_size = global_batch_size,
-          batch_preprocess= lambda batch: _batch_preprocess(batch,micro_batch_size = micro_batch_size)
+          global_batch_size = global_batch_size
           )
     else:
       data_loader = BertPretrainBinned(
@@ -503,8 +471,7 @@ def get_bert_pretrain_data_loader(
           base_seed=base_seed,
           start_epoch=start_epoch,
           logger=logger,
-          global_batch_size = global_batch_size,
-          batch_preprocess= lambda batch: _batch_preprocess(batch,micro_batch_size = micro_batch_size)
+          global_batch_size = global_batch_size
       )
   else:  # un-binned
     data_loader = data_loader_class(
