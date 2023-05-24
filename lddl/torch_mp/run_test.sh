@@ -1,0 +1,1 @@
+TORCH_DISTRIBUTED_DEBUG=DETAIL HYDRA_FULL_ERROR=1 torchrun --nnode 1 --nproc_per_node 2 --master_port 8889 test_LDDL.py --path /workspace/parquet  --vocab-file /workspace/bert_pile5/bert-large-cased-vocab.txt

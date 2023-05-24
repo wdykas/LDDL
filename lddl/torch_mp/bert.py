@@ -106,7 +106,8 @@ def _to_encoded_inputs(
     attention_mask = torch.zeros_like(input_ids)
     if static_masking:
       labels = torch.full_like(input_ids, ignore_index)
-      
+
+      #TODO: TAKE A LOOK AT THIS LAST,LOOKS GOOD
       loss_mask = torch.zeros(micro_batch_size, batch_seq_len, dtype=torch.long)
       mb_masked_lm_positions = all_masked_lm_positions[i:(i + micro_batch_size)]
       for j, indices in enumerate(mb_masked_lm_positions):
@@ -116,6 +117,7 @@ def _to_encoded_inputs(
     
     # Fill in the input torch.Tensor's.
     for sample_idx in range(i,(i + micro_batch_size)):
+      #SAMPLE_IDX IS THE GLOBAL INDEX
       #TODO Check for correctness here, we are taking the modolus to find the local index
       local_sample_index = sample_idx % micro_batch_size
       tokens_A, tokens_B = As[sample_idx], Bs[sample_idx]
@@ -134,8 +136,13 @@ def _to_encoded_inputs(
       attention_mask[local_sample_index, :end_idx] = 1
       if static_masking:
         # Prepare the MLM labels.
-        labels[local_sample_index, all_masked_lm_positions[i]] = torch.as_tensor(
-            tokenizer.convert_tokens_to_ids(all_masked_lm_labels[i]),
+        #TODO WERE WE INDEXING WITH I WRONG???
+        # labels[local_sample_index, all_masked_lm_positions[i]] = torch.as_tensor(
+        #     tokenizer.convert_tokens_to_ids(all_masked_lm_labels[i]),
+        #     dtype=torch.long,
+        # )
+        labels[local_sample_index, all_masked_lm_positions[sample_idx]] = torch.as_tensor(
+            tokenizer.convert_tokens_to_ids(all_masked_lm_labels[sample_idx]),
             dtype=torch.long,
         )
       else:
@@ -417,7 +424,6 @@ def get_bert_pretrain_data_loader(
   if not return_raw_samples:
     data_loader_kwargs['collate_fn'] = lambda batch: extra_collate(_batch_preprocess(batch,micro_batch_size = micro_batch_size))
   data_loader_kwargs['persistent_workers'] = True
-
   # Find all the parquet file paths and figure out whether it is binned or
   # un-binned.
   all_file_paths = get_all_parquets_under(path)

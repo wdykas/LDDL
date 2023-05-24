@@ -299,5 +299,6 @@ class ParquetDataset(IterableDataset):
         self.samples_seen
     )
     for sample in iter(self.sb):
-      yield self._transform(sample)
+      sample = self._transform(sample)
+      yield sample
     self.samples_seen = 0
